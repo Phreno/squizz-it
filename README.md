@@ -23,6 +23,7 @@ Tu dois reproduire une séquence de plus en plus longue:
 3. puis les trois premières, etc.
 
 Si une réponse est fausse, la même carte est rejouée jusqu'à réussite.
+En cas d'erreur, l'application affiche la réponse attendue pour faciliter l'apprentissage immédiat.
 Lorsqu'une carte est rejouée dans la séquence déjà validée, la question est cachée (seul l'index d'étape est affiché).
 Quand un deck est entièrement validé, il est automatiquement remélangé et une nouvelle manche démarre.
 
@@ -54,4 +55,14 @@ cargo run -- --search ex
 Quitter pendant une session:
 ```bash
 q
+```
+
+Afficher la question complète (mode focus) pendant une session:
+```bash
+f
+```
+
+Afficher/fermer le menu d'aide:
+```bash
+?
 ```

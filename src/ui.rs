@@ -1,8 +1,4 @@
-use std::{
-    io,
-    path::PathBuf,
-    time::Duration,
-};
+use std::{io, path::PathBuf, time::Duration};
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -12,10 +8,10 @@ use crossterm::{
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 use thiserror::Error;
 
@@ -109,7 +105,8 @@ struct App {
     session_config: SessionConfig,
     deck_name: String,
     session: Option<Session>,
-    total_cards: usize,
+    focus_question: bool,
+    show_help: bool,
 }
 
 impl App {
@@ -126,7 +123,8 @@ impl App {
             session_config: SessionConfig::from(config.game.clone()),
             deck_name: String::new(),
             session: None,
-            total_cards: 0,
+            focus_question: false,
+            show_help: false,
         }
     }
 
@@ -150,9 +148,10 @@ impl App {
     fn start_session(&mut self, deck_path: PathBuf) -> Result<(), UiError> {
         let deck = load_deck(&deck_path, self.delimiter)?;
         self.deck_name = deck.name.clone();
-        self.total_cards = deck.cards.len();
         self.session = Some(Session::new(deck.cards, self.session_config)?);
         self.answer_input.clear();
+        self.focus_question = false;
+        self.show_help = false;
         self.status = StatusMessage::success("Session lancée. Bonne mémoire.");
         self.screen = Screen::Playing;
         Ok(())
@@ -217,6 +216,16 @@ fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<(), UiError> {
         app.should_exit = true;
         return Ok(());
     }
+    if matches!(key.code, KeyCode::Char('?')) {
+        app.show_help = !app.show_help;
+        return Ok(());
+    }
+    if app.show_help {
+        if matches!(key.code, KeyCode::Esc) {
+            app.show_help = false;
+        }
+        return Ok(());
+    }
     if matches!(key.code, KeyCode::Char('q')) {
         app.should_exit = true;
         return Ok(());
@@ -277,13 +286,37 @@ fn handle_play_key(app: &mut App, key: KeyEvent) -> Result<(), UiError> {
         return Ok(());
     };
 
+    if app.focus_question {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('f') | KeyCode::Char('F') => {
+                app.focus_question = false;
+                app.status = StatusMessage::info("Mode focus fermé.");
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     match key.code {
+        KeyCode::Char('f') | KeyCode::Char('F') => {
+            app.focus_question = true;
+            app.status = StatusMessage::info("Mode focus ouvert. Échap pour fermer.");
+        }
         KeyCode::Enter => {
             let answer = app.answer_input.trim_end().to_string();
             app.answer_input.clear();
+            if answer.trim().is_empty() {
+                app.status = StatusMessage::warning("Saisis une réponse avant de valider.");
+                return Ok(());
+            }
+
+            let expected_answer = session.current_card().value.clone();
             match session.submit_answer(&answer) {
                 SubmitOutcome::Incorrect => {
-                    app.status = StatusMessage::error("Incorrect. Rejoue cette carte.");
+                    app.status = StatusMessage::error(format!(
+                        "Incorrect. Réponse attendue: {}",
+                        expected_answer
+                    ));
                 }
                 SubmitOutcome::AdvanceCard => {
                     app.status = StatusMessage::success("Correct. Continue la séquence.");
@@ -317,6 +350,9 @@ fn draw(frame: &mut Frame, app: &App) {
     match app.screen {
         Screen::DeckSelect => draw_deck_screen(frame, app),
         Screen::Playing => draw_play_screen(frame, app),
+    }
+    if app.show_help {
+        draw_help_overlay(frame, app.screen, app.focus_question);
     }
 }
 
@@ -392,8 +428,10 @@ fn draw_deck_screen(frame: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL).title("Statut"));
     frame.render_widget(status, areas[3]);
 
-    let help = Paragraph::new("↑/↓ sélectionner · Entrée ouvrir · Échap reset filtre · q quitter")
-        .style(Style::default().fg(Color::DarkGray));
+    let help = Paragraph::new(
+        "↑/↓ sélectionner · Entrée ouvrir · Échap reset filtre · ? aide · q quitter",
+    )
+    .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(help, areas[4]);
 }
 
@@ -404,20 +442,22 @@ fn draw_play_screen(frame: &mut Frame, app: &App) {
 
     let (stage_len, total_cards, card_position) = session.progress();
     let show_question = should_show_question(stage_len, card_position);
-    let question_text = if show_question {
-        session.current_card().key.as_str()
+    let raw_question = if show_question {
+        session.current_card().key.clone()
     } else {
-        "Carte rejouée, réponds de mémoire."
+        "Carte rejouée, réponds de mémoire. Active le focus (f) pour revoir la question."
+            .to_string()
     };
 
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Min(8),
+            Constraint::Length(12),
             Constraint::Length(3),
-            Constraint::Length(3),
+            Constraint::Length(4),
             Constraint::Length(2),
+            Constraint::Min(0),
         ])
         .split(frame.area());
 
@@ -435,12 +475,48 @@ fn draw_play_screen(frame: &mut Frame, app: &App) {
     .block(Block::default().borders(Borders::ALL).title("Progression"));
     frame.render_widget(header, areas[0]);
 
-    let card_title = if show_question {
-        "Carte Active"
+    draw_question_card_preview(frame, areas[1], &raw_question, show_question);
+
+    let answer = Paragraph::new(app.answer_input.as_str())
+        .block(Block::default().borders(Borders::ALL).title("Ta Réponse"));
+    frame.render_widget(answer, areas[2]);
+
+    let status = Paragraph::new(app.status.text.as_str())
+        .style(style_for_tone(app.status.tone))
+        .wrap(Wrap { trim: true })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Feedback Apprentissage"),
+        );
+    frame.render_widget(status, areas[3]);
+
+    let help = if app.focus_question {
+        "Mode focus · Échap/f fermer · ? aide · q quitter"
     } else {
-        "Carte Mémorisée"
+        "Entrée valider · f focus carte · Échap vider saisie · ? aide · q quitter"
     };
-    let card = Paragraph::new(question_text)
+    let help = Paragraph::new(help).style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(help, areas[4]);
+
+    if app.focus_question {
+        draw_focus_overlay(frame, session.current_card().key.as_str());
+    }
+}
+
+fn draw_question_card_preview(
+    frame: &mut Frame,
+    area: Rect,
+    question_preview: &str,
+    show_question: bool,
+) {
+    let preview_chars = area
+        .width
+        .saturating_sub(6)
+        .saturating_mul(area.height.saturating_sub(3)) as usize;
+    let preview_text = truncate_with_ellipsis(question_preview, preview_chars.max(20));
+    let front_widget = Paragraph::new(preview_text)
+        .wrap(Wrap { trim: true })
         .style(
             Style::default()
                 .fg(if show_question {
@@ -454,22 +530,96 @@ fn draw_play_screen(frame: &mut Frame, app: &App) {
                     Modifier::ITALIC
                 }),
         )
-        .wrap(Wrap { trim: true })
-        .block(Block::default().borders(Borders::ALL).title(card_title));
-    frame.render_widget(card, areas[1]);
+        .block(Block::default().borders(Borders::ALL).title("Aperçu Carte"));
+    frame.render_widget(front_widget, area);
+}
 
-    let answer = Paragraph::new(app.answer_input.as_str())
-        .block(Block::default().borders(Borders::ALL).title("Ta Réponse"));
-    frame.render_widget(answer, areas[2]);
+fn draw_focus_overlay(frame: &mut Frame, full_question: &str) {
+    let popup = centered_rect(84, 72, frame.area());
+    frame.render_widget(Clear, popup);
+    let widget = Paragraph::new(full_question)
+        .wrap(Wrap { trim: false })
+        .style(Style::default().fg(Color::White))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Question complète · Échap/f pour fermer"),
+        );
+    frame.render_widget(widget, popup);
+}
 
-    let status = Paragraph::new(app.status.text.as_str())
-        .style(style_for_tone(app.status.tone))
-        .block(Block::default().borders(Borders::ALL).title("Feedback"));
-    frame.render_widget(status, areas[3]);
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1]);
+    horizontal[1]
+}
+fn draw_help_overlay(frame: &mut Frame, screen: Screen, focus_question: bool) {
+    let popup = centered_rect(78, 78, frame.area());
+    frame.render_widget(Clear, popup);
 
-    let help = Paragraph::new("Entrée valider · Échap vider saisie · q quitter")
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(help, areas[4]);
+    let screen_specific = match screen {
+        Screen::DeckSelect => [
+            "Écran decks",
+            "  ↑/↓ : naviguer dans la liste",
+            "  Entrée : ouvrir le deck sélectionné",
+            "  Texte : filtrer les decks",
+            "  Backspace : effacer le filtre",
+            "  Échap : réinitialiser le filtre",
+        ]
+        .join("\n"),
+        Screen::Playing => {
+            if focus_question {
+                ["Écran jeu (focus actif)", "  Échap ou f : fermer le focus"].join("\n")
+            } else {
+                [
+                    "Écran jeu",
+                    "  Texte : saisir la réponse",
+                    "  Entrée : valider la réponse",
+                    "  Backspace : effacer un caractère",
+                    "  Échap : vider la saisie",
+                    "  f : ouvrir la question complète (focus)",
+                ]
+                .join("\n")
+            }
+        }
+    };
+
+    let content = format!(
+        "Aide Clavier\n\nGlobal\n  ? : ouvrir/fermer cette aide\n  q : quitter l'application\n  Ctrl+C : quitter l'application\n\n{}",
+        screen_specific
+    );
+
+    let widget = Paragraph::new(content)
+        .wrap(Wrap { trim: false })
+        .block(Block::default().borders(Borders::ALL).title("Aide"));
+    frame.render_widget(widget, popup);
+}
+
+fn truncate_with_ellipsis(text: &str, max_chars: usize) -> String {
+    let char_count = text.chars().count();
+    if char_count <= max_chars {
+        return text.to_string();
+    }
+    let mut truncated = text
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    truncated.push('…');
+    truncated
 }
 
 fn style_for_tone(tone: MessageTone) -> Style {
@@ -520,7 +670,7 @@ fn should_show_question(stage_len: usize, card_position: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::should_show_question;
+    use super::{should_show_question, truncate_with_ellipsis};
 
     #[test]
     fn replayed_cards_hide_question() {
@@ -528,5 +678,11 @@ mod tests {
         assert!(!should_show_question(3, 2));
         assert!(should_show_question(3, 3));
         assert!(should_show_question(1, 1));
+    }
+
+    #[test]
+    fn preview_text_is_truncated_with_ellipsis() {
+        assert_eq!(truncate_with_ellipsis("abcdef", 4), "abc…");
+        assert_eq!(truncate_with_ellipsis("abc", 10), "abc");
     }
 }

@@ -27,6 +27,7 @@ fn engine_supports_learning_flow_without_io() {
             answer_mode: AnswerMode::Exact,
             normalize_whitespace: true,
             shuffle_seed: Some(11),
+            pre_ordered: false,
         },
     )
     .expect("valid session");

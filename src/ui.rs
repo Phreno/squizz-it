@@ -19,6 +19,8 @@ use crate::{
     config::AppConfig,
     deck::{DeckError, discover_decks, filter_decks, load_deck},
     game::{Session, SessionConfig, SessionError, SubmitOutcome},
+    persistence::{DeckProgress, Store, default_store_path, load_store, now_unix, save_store},
+    srs,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -107,10 +109,21 @@ struct App {
     session: Option<Session>,
     focus_question: bool,
     show_help: bool,
+    store: Store,
+    store_path: PathBuf,
+    session_correct: u32,
+    session_incorrect: u32,
 }
 
 impl App {
-    fn new(config: &AppConfig, decks: Vec<PathBuf>, delimiter: u8, options: &UiOptions) -> Self {
+    fn new(
+        config: &AppConfig,
+        decks: Vec<PathBuf>,
+        delimiter: u8,
+        options: &UiOptions,
+        store: Store,
+        store_path: PathBuf,
+    ) -> Self {
         Self {
             screen: Screen::DeckSelect,
             decks,
@@ -125,6 +138,10 @@ impl App {
             session: None,
             focus_question: false,
             show_help: false,
+            store,
+            store_path,
+            session_correct: 0,
+            session_incorrect: 0,
         }
     }
 
@@ -148,11 +165,40 @@ impl App {
     fn start_session(&mut self, deck_path: PathBuf) -> Result<(), UiError> {
         let deck = load_deck(&deck_path, self.delimiter)?;
         self.deck_name = deck.name.clone();
-        self.session = Some(Session::new(deck.cards, self.session_config)?);
+
+        let progress = self.store.deck_progress_mut(&self.deck_name);
+        let has_history = progress.total_sessions > 0;
+        let prev_sessions = progress.total_sessions;
+        let accuracy = progress.overall_accuracy();
+        progress.record_session_start();
+        let _ = save_store(&self.store, &self.store_path);
+
+        let cards = if self.session_config.pre_ordered {
+            let now = now_unix();
+            let empty = DeckProgress::default();
+            let deck_progress = self.store.decks.get(&self.deck_name).unwrap_or(&empty);
+            srs::order_by_priority(deck.cards, deck_progress, now)
+        } else {
+            deck.cards
+        };
+
+        self.session = Some(Session::new(cards, self.session_config)?);
         self.answer_input.clear();
         self.focus_question = false;
         self.show_help = false;
-        self.status = StatusMessage::success("Session lancée. Bonne mémoire.");
+        self.session_correct = 0;
+        self.session_incorrect = 0;
+
+        self.status = if has_history {
+            StatusMessage::success(format!(
+                "Session lancée. {} sessions précédentes, {:.0}% de précision.",
+                prev_sessions,
+                accuracy * 100.0
+            ))
+        } else {
+            StatusMessage::success("Session lancée. Premier passage sur ce deck.")
+        };
+
         self.screen = Screen::Playing;
         Ok(())
     }
@@ -178,7 +224,10 @@ pub fn run(config: &AppConfig, options: UiOptions) -> Result<(), UiError> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
-    result
+
+    let app = result?;
+    print_session_summary(&app);
+    Ok(())
 }
 
 fn run_event_loop(
@@ -187,8 +236,10 @@ fn run_event_loop(
     options: UiOptions,
     decks: Vec<PathBuf>,
     delimiter: u8,
-) -> Result<(), UiError> {
-    let mut app = App::new(config, decks, delimiter, &options);
+) -> Result<App, UiError> {
+    let store_path = default_store_path();
+    let store = load_store(&store_path).unwrap_or_default();
+    let mut app = App::new(config, decks, delimiter, &options, store, store_path);
 
     if let Some(selector) = options.deck {
         let path = select_deck_from_selector(&app.decks, &selector)?;
@@ -208,7 +259,15 @@ fn run_event_loop(
         }
     }
 
-    Ok(())
+    if let Some(session) = &app.session {
+        let completed = session.round().saturating_sub(1) as u32;
+        app.store
+            .deck_progress_mut(&app.deck_name)
+            .update_best_round(completed);
+    }
+    let _ = save_store(&app.store, &app.store_path);
+
+    Ok(app)
 }
 
 fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<(), UiError> {
@@ -280,11 +339,11 @@ fn handle_deck_select_key(app: &mut App, key: KeyEvent) -> Result<(), UiError> {
 }
 
 fn handle_play_key(app: &mut App, key: KeyEvent) -> Result<(), UiError> {
-    let Some(session) = app.session.as_mut() else {
+    if app.session.is_none() {
         app.status = StatusMessage::error("Session absente.");
         app.screen = Screen::DeckSelect;
         return Ok(());
-    };
+    }
 
     if app.focus_question {
         match key.code {
@@ -310,26 +369,51 @@ fn handle_play_key(app: &mut App, key: KeyEvent) -> Result<(), UiError> {
                 return Ok(());
             }
 
+            let session = app.session.as_mut().unwrap();
+            let card_key = session.current_card().key.clone();
             let expected_answer = session.current_card().value.clone();
-            match session.submit_answer(&answer) {
-                SubmitOutcome::Incorrect => {
-                    app.status = StatusMessage::error(format!(
-                        "Incorrect. Réponse attendue: {}",
-                        expected_answer
-                    ));
+            let is_frontier = !session.is_replay_card();
+            let outcome = session.submit_answer(&answer);
+            let current_round = session.round();
+
+            let correct = outcome != SubmitOutcome::Incorrect;
+            let progress = app.store.deck_progress_mut(&app.deck_name);
+            if correct {
+                progress.card_stats_mut(&card_key).record_correct();
+                if outcome == SubmitOutcome::RoundRestarted {
+                    progress.update_best_round(current_round.saturating_sub(1) as u32);
                 }
+            } else {
+                progress.card_stats_mut(&card_key).record_incorrect();
+            }
+            if is_frontier {
+                let now = now_unix();
+                srs::update_schedule(progress.card_stats_mut(&card_key), correct, now);
+            }
+
+            if outcome == SubmitOutcome::Incorrect {
+                app.session_incorrect += 1;
+            } else {
+                app.session_correct += 1;
+            }
+
+            app.status = match outcome {
+                SubmitOutcome::Incorrect => StatusMessage::error(format!(
+                    "Incorrect. Réponse attendue: {}",
+                    expected_answer
+                )),
                 SubmitOutcome::AdvanceCard => {
-                    app.status = StatusMessage::success("Correct. Continue la séquence.");
+                    StatusMessage::success("Correct. Continue la séquence.")
                 }
                 SubmitOutcome::AdvanceStage => {
-                    app.status =
-                        StatusMessage::success("Séquence validée. Nouvelle carte ajoutée.");
+                    StatusMessage::success("Séquence validée. Nouvelle carte ajoutée.")
                 }
                 SubmitOutcome::RoundRestarted => {
-                    app.status =
-                        StatusMessage::success("Deck validé. Nouveau mélange, nouvelle manche.");
+                    StatusMessage::success("Deck validé. Nouveau mélange, nouvelle manche.")
                 }
-            }
+            };
+
+            let _ = save_store(&app.store, &app.store_path);
         }
         KeyCode::Backspace => {
             app.answer_input.pop();
@@ -662,6 +746,22 @@ fn select_deck_from_selector(
             needle: selector.to_string(),
         }),
     }
+}
+
+fn print_session_summary(app: &App) {
+    let total = app.session_correct + app.session_incorrect;
+    if total == 0 {
+        return;
+    }
+    let accuracy = app.session_correct as f64 / total as f64 * 100.0;
+    let round = app.session.as_ref().map(|s| s.round()).unwrap_or(1);
+
+    println!("── Squizz-it · Fin de session ──");
+    println!("Deck: {} · Manche {}", app.deck_name, round);
+    println!(
+        "{} correctes · {} incorrectes · {:.0}%",
+        app.session_correct, app.session_incorrect, accuracy
+    );
 }
 
 fn should_show_question(stage_len: usize, card_position: usize) -> bool {

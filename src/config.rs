@@ -28,6 +28,8 @@ pub struct GameConfig {
     pub normalize_whitespace: bool,
     #[serde(default)]
     pub shuffle_seed: Option<u64>,
+    #[serde(default = "default_true")]
+    pub srs_ordering: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -72,6 +74,7 @@ impl Default for GameConfig {
             answer_mode: AnswerMode::default(),
             normalize_whitespace: default_true(),
             shuffle_seed: None,
+            srs_ordering: default_true(),
         }
     }
 }
@@ -177,7 +180,8 @@ shuffle_seed = 42
             GameConfig {
                 answer_mode: AnswerMode::Exact,
                 normalize_whitespace: false,
-                shuffle_seed: Some(42)
+                shuffle_seed: Some(42),
+                srs_ordering: true,
             }
         );
     }

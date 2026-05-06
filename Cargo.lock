@@ -811,6 +811,7 @@ dependencies = [
  "rand",
  "ratatui",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "toml",

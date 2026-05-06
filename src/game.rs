@@ -11,6 +11,7 @@ pub struct SessionConfig {
     pub answer_mode: AnswerMode,
     pub normalize_whitespace: bool,
     pub shuffle_seed: Option<u64>,
+    pub pre_ordered: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +44,7 @@ impl From<GameConfig> for SessionConfig {
             answer_mode: value.answer_mode,
             normalize_whitespace: value.normalize_whitespace,
             shuffle_seed: value.shuffle_seed,
+            pre_ordered: value.srs_ordering,
         }
     }
 }
@@ -56,7 +58,9 @@ impl Session {
             .shuffle_seed
             .map(StdRng::seed_from_u64)
             .unwrap_or_else(StdRng::from_entropy);
-        cards.shuffle(&mut rng);
+        if !config.pre_ordered {
+            cards.shuffle(&mut rng);
+        }
 
         Ok(Self {
             cards,
@@ -156,6 +160,7 @@ mod tests {
             answer_mode: AnswerMode::CaseInsensitive,
             normalize_whitespace: true,
             shuffle_seed: Some(seed),
+            pre_ordered: false,
         }
     }
 
@@ -207,6 +212,7 @@ mod tests {
                 answer_mode: AnswerMode::Exact,
                 normalize_whitespace: true,
                 shuffle_seed: Some(3),
+                pre_ordered: false,
             },
         )
         .expect("session");

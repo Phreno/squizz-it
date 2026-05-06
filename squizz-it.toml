@@ -1,0 +1,9 @@
+decks_dir = "decks"
+
+[csv]
+delimiter = ","
+
+[game]
+answer_mode = "case_insensitive"
+normalize_whitespace = true
+shuffle_seed = 7

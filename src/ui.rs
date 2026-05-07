@@ -333,18 +333,29 @@ fn run_event_loop(
 }
 
 fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<(), UiError> {
+    // Ctrl+C always quits
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
         app.should_exit = true;
         return Ok(());
     }
-    if matches!(key.code, KeyCode::Char('?')) {
-        app.show_help = !app.show_help;
-        return Ok(());
-    }
+
+    // Help overlay absorbs all keys except Esc to close it
     if app.show_help {
         if matches!(key.code, KeyCode::Esc) {
             app.show_help = false;
         }
+        return Ok(());
+    }
+
+    // On the Playing screen, character keys go to the answer input;
+    // global shortcuts (q, ?) only apply on non-input screens.
+    if app.screen == Screen::Playing {
+        return handle_play_key(app, key);
+    }
+
+    // Deck-select screen: global shortcuts apply
+    if matches!(key.code, KeyCode::Char('?')) {
+        app.show_help = !app.show_help;
         return Ok(());
     }
     if matches!(key.code, KeyCode::Char('q')) {
@@ -352,10 +363,7 @@ fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<(), UiError> {
         return Ok(());
     }
 
-    match app.screen {
-        Screen::DeckSelect => handle_deck_select_key(app, key),
-        Screen::Playing => handle_play_key(app, key),
-    }
+    handle_deck_select_key(app, key)
 }
 
 fn handle_deck_select_key(app: &mut App, key: KeyEvent) -> Result<(), UiError> {
@@ -409,7 +417,7 @@ fn handle_play_key(app: &mut App, key: KeyEvent) -> Result<(), UiError> {
 
     if app.focus_question {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('f') | KeyCode::Char('F') => {
+            KeyCode::Esc => {
                 app.focus_question = false;
                 app.status = StatusMessage::info("Mode focus fermé.");
             }
@@ -419,9 +427,22 @@ fn handle_play_key(app: &mut App, key: KeyEvent) -> Result<(), UiError> {
     }
 
     match key.code {
-        KeyCode::Char('f') | KeyCode::Char('F') => {
-            app.focus_question = true;
-            app.status = StatusMessage::info("Mode focus ouvert. Échap pour fermer.");
+        // Ctrl+Q quits from the play screen
+        KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.should_exit = true;
+        }
+        // Ctrl+H toggles help
+        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.show_help = !app.show_help;
+        }
+        // Ctrl+F toggles focus
+        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.focus_question = !app.focus_question;
+            app.status = if app.focus_question {
+                StatusMessage::info("Mode focus ouvert. Échap pour fermer.")
+            } else {
+                StatusMessage::info("Mode focus fermé.")
+            };
         }
         KeyCode::Enter => {
             let answer = app.answer_input.trim_end().to_string();
@@ -609,7 +630,7 @@ fn draw_play_screen(frame: &mut Frame, app: &App) {
     let raw_question = if show_question {
         session.current_card().key.clone()
     } else {
-        "Carte rejouée, réponds de mémoire. Active le focus (f) pour revoir la question."
+        "Carte rejouée, réponds de mémoire. Ctrl+F pour revoir la question."
             .to_string()
     };
 
@@ -692,9 +713,9 @@ fn draw_play_screen(frame: &mut Frame, app: &App) {
     frame.render_widget(status, areas[4]);
 
     let help = if app.focus_question {
-        "Mode focus · Échap/f fermer · ? aide · q quitter"
+        "Mode focus · Échap fermer · Ctrl+H aide · Ctrl+Q quitter"
     } else {
-        "Entrée valider · f focus carte · Échap vider saisie · ? aide · q quitter"
+        "Entrée valider · Ctrl+F focus · Échap vider · Ctrl+H aide · Ctrl+Q quitter"
     };
     let help = Paragraph::new(help).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(help, areas[5]);
@@ -743,7 +764,7 @@ fn draw_focus_overlay(frame: &mut Frame, full_question: &str) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Question complète · Échap/f pour fermer"),
+                .title("Question complète · Échap pour fermer"),
         );
     frame.render_widget(widget, popup);
 }
@@ -783,7 +804,7 @@ fn draw_help_overlay(frame: &mut Frame, screen: Screen, focus_question: bool) {
         .join("\n"),
         Screen::Playing => {
             if focus_question {
-                ["Écran jeu (focus actif)", "  Échap ou f : fermer le focus"].join("\n")
+                ["Écran jeu (focus actif)", "  Échap : fermer le focus"].join("\n")
             } else {
                 [
                     "Écran jeu",
@@ -791,7 +812,9 @@ fn draw_help_overlay(frame: &mut Frame, screen: Screen, focus_question: bool) {
                     "  Entrée : valider la réponse",
                     "  Backspace : effacer un caractère",
                     "  Échap : vider la saisie",
-                    "  f : ouvrir la question complète (focus)",
+                    "  Ctrl+F : ouvrir/fermer le focus carte",
+                    "  Ctrl+H : ouvrir/fermer l'aide",
+                    "  Ctrl+Q : quitter",
                 ]
                 .join("\n")
             }
@@ -799,7 +822,7 @@ fn draw_help_overlay(frame: &mut Frame, screen: Screen, focus_question: bool) {
     };
 
     let content = format!(
-        "Aide Clavier\n\nGlobal\n  ? : ouvrir/fermer cette aide\n  q : quitter l'application\n  Ctrl+C : quitter l'application\n\n{}",
+        "Aide Clavier\n\nGlobal\n  Ctrl+C : quitter l'application\n\n{}",
         screen_specific
     );
 

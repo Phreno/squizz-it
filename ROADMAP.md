@@ -31,15 +31,15 @@ Le mode Simon est efficace pour le rappel séquentiel, mais il ne couvre pas tou
 
 Afficher la réponse en bloc après une erreur fonctionne, mais un indice graduel serait plus pédagogique.
 
-⬜ Première erreur : nombre de caractères attendu (_ _ _ _ _).
-⬜ Deuxième erreur : première lettre révélée (P _ _ _ _).
-⬜ Troisième erreur : réponse complète (comportement actuel).
-⬜ Configurable via game.hint_mode = "progressive" | "immediate" | "none".
+✅ Première erreur : nombre de caractères attendu (_ _ _ _ _).
+✅ Deuxième erreur : première lettre révélée (P _ _ _ _).
+✅ Troisième erreur : réponse complète (comportement actuel).
+✅ Configurable via game.hint_mode = "progressive" | "immediate" | "none".
 
 ## 5. Support multi-réponses et tolérance
 
 ⬜ Réponses alternatives : une colonne aliases dans le CSV (Paris;paris;Paname) pour accepter les synonymes.
-⬜ Distance de Levenshtein : signaler les quasi-bonnes réponses ("Tu as écrit Prais, tu voulais dire Paris ?") au lieu d'un rejet sec.
+✅ Distance de Levenshtein : signaler les quasi-bonnes réponses (« Presque ! Tu as écrit Prais ») au lieu d'un rejet sec.
 ⬜ Réponses partielles : pour les cartes longues, accepter un score de correspondance configurable.
 
 ## 6. Gestion des decks enrichie
@@ -62,6 +62,6 @@ Si je devais choisir un ordre d'implémentation pour maximiser l'efficacité d'a
 1. ~~Persistance + répétition espacée~~ ✅
 2. ~~Statistiques de fin de session (feedback immédiat)~~ ✅
 3. ~~Mode classique + inversé~~ ✅
-4. Indices progressifs (réduit la frustration)
-5. Tolérance Levenshtein (qualité de vie)
+4. ~~Indices progressifs~~ ✅
+5. ~~Tolérance Levenshtein~~ ✅
 6. Le reste selon tes priorités

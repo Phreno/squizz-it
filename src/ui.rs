@@ -16,9 +16,11 @@ use ratatui::{
 use thiserror::Error;
 
 use crate::{
-    config::{AppConfig, PlayMode},
+    config::{AppConfig, HintMode, PlayMode},
     deck::{DeckError, Flashcard, discover_decks, filter_decks, load_deck},
+    fuzzy,
     game::{Session, SessionConfig, SessionError, SubmitOutcome},
+    hints,
     persistence::{DeckProgress, Store, default_store_path, load_store, now_unix, save_store},
     srs,
 };
@@ -119,6 +121,8 @@ struct App {
     new_cards_count: u32,
     reviewed_cards_count: u32,
     review_mode: bool,
+    consecutive_errors: u32,
+    hint_mode: HintMode,
 }
 
 impl App {
@@ -158,6 +162,8 @@ impl App {
             new_cards_count: 0,
             reviewed_cards_count: 0,
             review_mode: options.review,
+            consecutive_errors: 0,
+            hint_mode: config.game.hint_mode,
         }
     }
 
@@ -240,6 +246,7 @@ impl App {
         self.session_correct = 0;
         self.session_incorrect = 0;
         self.session_start = Some(Instant::now());
+        self.consecutive_errors = 0;
 
         let review_label = if self.review_mode { " (révision)" } else { "" };
         self.status = if has_history {
@@ -448,15 +455,31 @@ fn handle_play_key(app: &mut App, key: KeyEvent) -> Result<(), UiError> {
 
             if outcome == SubmitOutcome::Incorrect {
                 app.session_incorrect += 1;
+                app.consecutive_errors += 1;
             } else {
                 app.session_correct += 1;
+                app.consecutive_errors = 0;
             }
 
             app.status = match outcome {
-                SubmitOutcome::Incorrect => StatusMessage::error(format!(
-                    "Incorrect. Réponse attendue: {}",
-                    expected_answer
-                )),
+                SubmitOutcome::Incorrect => {
+                    let near = fuzzy::is_near_match(&expected_answer, &answer);
+                    let hint = hints::generate_hint(
+                        &expected_answer,
+                        app.consecutive_errors,
+                        app.hint_mode,
+                    );
+                    let prefix = if near {
+                        format!("Presque ! Tu as écrit « {} ».", answer)
+                    } else {
+                        "Incorrect.".to_string()
+                    };
+                    if hint.is_empty() {
+                        StatusMessage::error(prefix)
+                    } else {
+                        StatusMessage::error(format!("{prefix} {hint}"))
+                    }
+                }
                 SubmitOutcome::AdvanceCard => {
                     StatusMessage::success("Correct. Continue la séquence.")
                 }

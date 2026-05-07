@@ -23,6 +23,15 @@ pub enum PlayMode {
     Reverse,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HintMode {
+    #[default]
+    Progressive,
+    Immediate,
+    None,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct CsvConfig {
     #[serde(default = "default_delimiter")]
@@ -41,6 +50,8 @@ pub struct GameConfig {
     pub srs_ordering: bool,
     #[serde(default)]
     pub play_mode: PlayMode,
+    #[serde(default)]
+    pub hint_mode: HintMode,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -87,6 +98,7 @@ impl Default for GameConfig {
             shuffle_seed: None,
             srs_ordering: default_true(),
             play_mode: PlayMode::default(),
+            hint_mode: HintMode::default(),
         }
     }
 }
@@ -185,7 +197,7 @@ fn default_true() -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{AnswerMode, AppConfig, CsvConfig, GameConfig, PlayMode};
+    use super::{AnswerMode, AppConfig, CsvConfig, GameConfig, HintMode, PlayMode};
 
     #[test]
     fn parse_config_toml() {
@@ -217,6 +229,7 @@ shuffle_seed = 42
                 shuffle_seed: Some(42),
                 srs_ordering: true,
                 play_mode: PlayMode::Simon,
+                hint_mode: HintMode::Progressive,
             }
         );
     }

@@ -78,9 +78,34 @@ pub struct DeckProgress {
     pub cards: HashMap<String, CardStats>,
 }
 
+const SECONDS_PER_DAY: u64 = 86_400;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GlobalStats {
+    pub last_session_day: u64,
+    pub daily_streak: u32,
+}
+
+impl GlobalStats {
+    pub fn record_session(&mut self, now: u64) {
+        let today = now / SECONDS_PER_DAY;
+        if today == self.last_session_day {
+            return; // already recorded today
+        }
+        if today == self.last_session_day + 1 {
+            self.daily_streak += 1;
+        } else {
+            self.daily_streak = 1;
+        }
+        self.last_session_day = today;
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Store {
     pub decks: HashMap<String, DeckProgress>,
+    #[serde(default)]
+    pub global_stats: GlobalStats,
 }
 
 impl CardStats {
@@ -296,6 +321,35 @@ mod tests {
         let store =
             load_store(Path::new("/tmp/__squizz_it_missing_test__.json")).unwrap();
         assert!(store.decks.is_empty());
+    }
+
+    #[test]
+    fn global_stats_consecutive_days_increment_streak() {
+        let mut stats = GlobalStats::default();
+        stats.record_session(SECONDS_PER_DAY * 10); // day 10
+        assert_eq!(stats.daily_streak, 1);
+        stats.record_session(SECONDS_PER_DAY * 11); // day 11
+        assert_eq!(stats.daily_streak, 2);
+        stats.record_session(SECONDS_PER_DAY * 12); // day 12
+        assert_eq!(stats.daily_streak, 3);
+    }
+
+    #[test]
+    fn global_stats_gap_resets_streak() {
+        let mut stats = GlobalStats::default();
+        stats.record_session(SECONDS_PER_DAY * 10);
+        stats.record_session(SECONDS_PER_DAY * 11);
+        assert_eq!(stats.daily_streak, 2);
+        stats.record_session(SECONDS_PER_DAY * 15); // 3-day gap
+        assert_eq!(stats.daily_streak, 1);
+    }
+
+    #[test]
+    fn global_stats_same_day_does_not_increment() {
+        let mut stats = GlobalStats::default();
+        stats.record_session(SECONDS_PER_DAY * 10);
+        stats.record_session(SECONDS_PER_DAY * 10 + 3600);
+        assert_eq!(stats.daily_streak, 1);
     }
 
     #[test]

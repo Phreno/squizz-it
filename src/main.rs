@@ -15,6 +15,9 @@ struct Cli {
     search: Option<String>,
     #[arg(long)]
     seed: Option<u64>,
+    /// Launch a review session with only due cards.
+    #[arg(long)]
+    review: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,6 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         UiOptions {
             deck: cli.deck,
             search: cli.search,
+            review: cli.review,
         },
     )?;
 

@@ -8,14 +8,14 @@ Le manque le plus critique : rien ne survit entre deux sessions. Chaque lancemen
 
 ✅ Sauvegarder l'état sur disque (JSON dans ~/.local/share/squizz-it/) : scores par carte, nombre d'erreurs, date du dernier passage.
 ✅ Algorithme de répétition espacée (SM-2) : planifier automatiquement quand revoir chaque carte. Les cartes maîtrisées apparaissent moins souvent ; celles qui posent problème reviennent vite.
-⬜ File d'attente quotidienne : cargo run -- --review pour lancer une session contenant uniquement les cartes échues aujourd'hui.
+✅ File d'attente quotidienne : cargo run -- --review pour lancer une session contenant uniquement les cartes échues aujourd'hui.
 
 ## 2. Statistiques et feedback de progression
 
 Sans mesure, pas de motivation durable.
 
-🟡 Résumé de fin de session : précision (%) et nombre de réponses correctes/incorrectes sont affichés. Manquent : temps moyen par carte, nombre de cartes nouvelles vs revues, streak en cours.
-⬜ Barre de progression visuelle dans le header (un Gauge ratatui suffit).
+✅ Résumé de fin de session : précision (%), réponses correctes/incorrectes, temps moyen par carte, cartes nouvelles vs revues, streak quotidien.
+✅ Barre de progression visuelle dans le header (Gauge ratatui).
 ⬜ Historique par deck : courbe d'acquisition au fil des jours (exportable en CSV ou affichable en TUI avec sparklines).
 
 ## 3. Modes d'apprentissage complémentaires
@@ -51,7 +51,7 @@ Afficher la réponse en bloc après une erreur fonctionne, mais un indice gradue
 
 ## 7. Engagement et gamification légère
 
-🟡 Streak par carte : le suivi par carte existe (streak courant et meilleur streak dans CardStats). Manque : streak quotidien (jours consécutifs avec au moins une session).
+✅ Streak par carte et streak quotidien : le suivi par carte (streak courant et meilleur streak dans CardStats) et le streak quotidien (jours consécutifs avec session) sont implémentés.
 ⬜ Niveaux de maîtrise par carte : afficher un indicateur (🟥🟧🟨🟩) selon le taux de réussite.
 ⬜ Objectif configurable : game.daily_goal = 20 cartes par jour, avec une notification de complétion.
 
@@ -60,7 +60,7 @@ Afficher la réponse en bloc après une erreur fonctionne, mais un indice gradue
 Si je devais choisir un ordre d'implémentation pour maximiser l'efficacité d'apprentissage :
 
 1. ~~Persistance + répétition espacée~~ ✅
-2. Statistiques de fin de session (feedback immédiat) 🟡
+2. ~~Statistiques de fin de session (feedback immédiat)~~ ✅
 3. Mode classique + inversé (couvre les cas d'usage courants)
 4. Indices progressifs (réduit la frustration)
 5. Tolérance Levenshtein (qualité de vie)

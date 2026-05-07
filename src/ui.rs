@@ -1,4 +1,4 @@
-use std::{io, path::PathBuf, time::Duration};
+use std::{io, path::PathBuf, time::{Duration, Instant}};
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -11,7 +11,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap},
 };
 use thiserror::Error;
 
@@ -27,6 +27,7 @@ use crate::{
 pub struct UiOptions {
     pub deck: Option<String>,
     pub search: Option<String>,
+    pub review: bool,
 }
 
 #[derive(Debug, Error)]
@@ -113,6 +114,10 @@ struct App {
     store_path: PathBuf,
     session_correct: u32,
     session_incorrect: u32,
+    session_start: Option<Instant>,
+    new_cards_count: u32,
+    reviewed_cards_count: u32,
+    review_mode: bool,
 }
 
 impl App {
@@ -142,6 +147,10 @@ impl App {
             store_path,
             session_correct: 0,
             session_incorrect: 0,
+            session_start: None,
+            new_cards_count: 0,
+            reviewed_cards_count: 0,
+            review_mode: options.review,
         }
     }
 
@@ -171,16 +180,40 @@ impl App {
         let prev_sessions = progress.total_sessions;
         let accuracy = progress.overall_accuracy();
         progress.record_session_start();
+
+        let now = now_unix();
+        self.store.global_stats.record_session(now);
         let _ = save_store(&self.store, &self.store_path);
 
-        let cards = if self.session_config.pre_ordered {
-            let now = now_unix();
-            let empty = DeckProgress::default();
-            let deck_progress = self.store.decks.get(&self.deck_name).unwrap_or(&empty);
-            srs::order_by_priority(deck.cards, deck_progress, now)
-        } else {
-            deck.cards
-        };
+        let empty = DeckProgress::default();
+        let deck_progress = self.store.decks.get(&self.deck_name).unwrap_or(&empty);
+
+        let mut cards = deck.cards;
+
+        if self.review_mode {
+            cards = srs::filter_due_cards(cards, deck_progress, now);
+            if cards.is_empty() {
+                self.status =
+                    StatusMessage::success("Rien à revoir. Toutes les cartes sont à jour !");
+                return Ok(());
+            }
+        }
+
+        self.new_cards_count = cards
+            .iter()
+            .filter(|c| {
+                deck_progress
+                    .cards
+                    .get(&c.key)
+                    .map(|s| s.total_reviews() == 0)
+                    .unwrap_or(true)
+            })
+            .count() as u32;
+        self.reviewed_cards_count = cards.len() as u32 - self.new_cards_count;
+
+        if self.session_config.pre_ordered {
+            cards = srs::order_by_priority(cards, deck_progress, now);
+        }
 
         self.session = Some(Session::new(cards, self.session_config)?);
         self.answer_input.clear();
@@ -188,15 +221,19 @@ impl App {
         self.show_help = false;
         self.session_correct = 0;
         self.session_incorrect = 0;
+        self.session_start = Some(Instant::now());
 
+        let review_label = if self.review_mode { " (révision)" } else { "" };
         self.status = if has_history {
             StatusMessage::success(format!(
-                "Session lancée. {} sessions précédentes, {:.0}% de précision.",
+                "Session{review_label} lancée. {} sessions précédentes, {:.0}% de précision.",
                 prev_sessions,
                 accuracy * 100.0
             ))
         } else {
-            StatusMessage::success("Session lancée. Premier passage sur ce deck.")
+            StatusMessage::success(format!(
+                "Session{review_label} lancée. Premier passage sur ce deck."
+            ))
         };
 
         self.screen = Screen::Playing;
@@ -537,7 +574,8 @@ fn draw_play_screen(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(12),
+            Constraint::Length(3),
+            Constraint::Length(10),
             Constraint::Length(3),
             Constraint::Length(4),
             Constraint::Length(2),
@@ -559,11 +597,27 @@ fn draw_play_screen(frame: &mut Frame, app: &App) {
     .block(Block::default().borders(Borders::ALL).title("Progression"));
     frame.render_widget(header, areas[0]);
 
-    draw_question_card_preview(frame, areas[1], &raw_question, show_question);
+    let ratio = if total_cards > 0 {
+        stage_len as f64 / total_cards as f64
+    } else {
+        0.0
+    };
+    let gauge = Gauge::default()
+        .block(Block::default().borders(Borders::ALL))
+        .gauge_style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+        .ratio(ratio.min(1.0))
+        .label(format!("{:.0}%", ratio * 100.0));
+    frame.render_widget(gauge, areas[1]);
+
+    draw_question_card_preview(frame, areas[2], &raw_question, show_question);
 
     let answer = Paragraph::new(app.answer_input.as_str())
         .block(Block::default().borders(Borders::ALL).title("Ta Réponse"));
-    frame.render_widget(answer, areas[2]);
+    frame.render_widget(answer, areas[3]);
 
     let status = Paragraph::new(app.status.text.as_str())
         .style(style_for_tone(app.status.tone))
@@ -573,7 +627,7 @@ fn draw_play_screen(frame: &mut Frame, app: &App) {
                 .borders(Borders::ALL)
                 .title("Feedback Apprentissage"),
         );
-    frame.render_widget(status, areas[3]);
+    frame.render_widget(status, areas[4]);
 
     let help = if app.focus_question {
         "Mode focus · Échap/f fermer · ? aide · q quitter"
@@ -581,7 +635,7 @@ fn draw_play_screen(frame: &mut Frame, app: &App) {
         "Entrée valider · f focus carte · Échap vider saisie · ? aide · q quitter"
     };
     let help = Paragraph::new(help).style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(help, areas[4]);
+    frame.render_widget(help, areas[5]);
 
     if app.focus_question {
         draw_focus_overlay(frame, session.current_card().key.as_str());
@@ -756,12 +810,27 @@ fn print_session_summary(app: &App) {
     let accuracy = app.session_correct as f64 / total as f64 * 100.0;
     let round = app.session.as_ref().map(|s| s.round()).unwrap_or(1);
 
+    let elapsed = app
+        .session_start
+        .map(|start| start.elapsed())
+        .unwrap_or_default();
+    let avg_secs = elapsed.as_secs_f64() / total as f64;
+
+    let streak = app.store.global_stats.daily_streak;
+
     println!("── Squizz-it · Fin de session ──");
     println!("Deck: {} · Manche {}", app.deck_name, round);
     println!(
         "{} correctes · {} incorrectes · {:.0}%",
         app.session_correct, app.session_incorrect, accuracy
     );
+    println!(
+        "{} nouvelles · {} revues · {:.1}s/carte",
+        app.new_cards_count, app.reviewed_cards_count, avg_secs
+    );
+    if streak > 0 {
+        println!("Streak quotidien : {} jour(s)", streak);
+    }
 }
 
 fn should_show_question(stage_len: usize, card_position: usize) -> bool {

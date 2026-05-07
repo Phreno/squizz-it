@@ -74,6 +74,23 @@ fn card_priority(key: &str, progress: &DeckProgress, now: u64) -> f64 {
     }
 }
 
+/// Filter cards to only those due for review (new cards or next_review <= now).
+pub fn filter_due_cards(
+    cards: Vec<Flashcard>,
+    progress: &DeckProgress,
+    now: u64,
+) -> Vec<Flashcard> {
+    cards
+        .into_iter()
+        .filter(|card| {
+            match progress.cards.get(&card.key) {
+                None => true, // new card
+                Some(stats) => stats.total_reviews() == 0 || stats.next_review <= now,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::persistence::DeckProgress;
@@ -184,6 +201,53 @@ mod tests {
         let ordered = order_by_priority(cards, &progress, 1000);
         assert_eq!(ordered[0].key, "new");
         assert_eq!(ordered[1].key, "known");
+    }
+
+    #[test]
+    fn filter_due_keeps_new_and_overdue_cards() {
+        use crate::deck::Flashcard;
+
+        let cards = vec![
+            Flashcard { key: "new".into(), value: "v1".into() },
+            Flashcard { key: "overdue".into(), value: "v2".into() },
+            Flashcard { key: "not_due".into(), value: "v3".into() },
+        ];
+
+        let mut progress = DeckProgress::default();
+
+        let overdue = progress.card_stats_mut("overdue");
+        overdue.correct_count = 3;
+        overdue.interval_days = 1.0;
+        overdue.next_review = 500;
+
+        let not_due = progress.card_stats_mut("not_due");
+        not_due.correct_count = 5;
+        not_due.interval_days = 30.0;
+        not_due.next_review = 2_000_000;
+
+        let due = filter_due_cards(cards, &progress, 1000);
+        let keys: Vec<&str> = due.iter().map(|c| c.key.as_str()).collect();
+        assert!(keys.contains(&"new"));
+        assert!(keys.contains(&"overdue"));
+        assert!(!keys.contains(&"not_due"));
+    }
+
+    #[test]
+    fn filter_due_returns_empty_when_nothing_due() {
+        use crate::deck::Flashcard;
+
+        let cards = vec![
+            Flashcard { key: "mastered".into(), value: "v1".into() },
+        ];
+
+        let mut progress = DeckProgress::default();
+        let stats = progress.card_stats_mut("mastered");
+        stats.correct_count = 10;
+        stats.interval_days = 30.0;
+        stats.next_review = 2_000_000;
+
+        let due = filter_due_cards(cards, &progress, 1000);
+        assert!(due.is_empty());
     }
 
     #[test]

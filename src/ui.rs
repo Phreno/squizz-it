@@ -1,7 +1,7 @@
 use std::{io, path::PathBuf, time::{Duration, Instant}};
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -318,7 +318,11 @@ fn run_event_loop(
         if event::poll(Duration::from_millis(50))? {
             let event = event::read()?;
             if let Event::Key(key) = event {
-                handle_key_event(&mut app, key)?;
+                // Only handle Press events; ignore Release/Repeat
+                // (Windows emits both Press and Release for each keystroke)
+                if key.kind == KeyEventKind::Press {
+                    handle_key_event(&mut app, key)?;
+                }
             }
         }
     }

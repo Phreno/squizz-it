@@ -22,10 +22,10 @@ Sans mesure, pas de motivation durable.
 
 Le mode Simon est efficace pour le rappel séquentiel, mais il ne couvre pas tous les angles.
 
-⬜ Mode classique : une carte, une réponse, sans contrainte de séquence. Utile pour la première découverte d'un deck.
-⬜ Mode inversé : répondre la question à partir de la réponse (value → key). Renforce la liaison bidirectionnelle.
+✅ Mode classique : une carte, une réponse, sans contrainte de séquence. Utile pour la première découverte d'un deck.
+✅ Mode inversé : répondre la question à partir de la réponse (value → key). Renforce la liaison bidirectionnelle.
 ⬜ Mode chrono : temps limité par carte ; entraîne la fluency, pas seulement l'exactitude.
-⬜ Sélection via --mode simon|classic|reverse|timed.
+✅ Sélection via --mode simon|classic|reverse (timed à venir).
 
 ## 4. Système d'indices progressifs
 
@@ -61,7 +61,7 @@ Si je devais choisir un ordre d'implémentation pour maximiser l'efficacité d'a
 
 1. ~~Persistance + répétition espacée~~ ✅
 2. ~~Statistiques de fin de session (feedback immédiat)~~ ✅
-3. Mode classique + inversé (couvre les cas d'usage courants)
+3. ~~Mode classique + inversé~~ ✅
 4. Indices progressifs (réduit la frustration)
 5. Tolérance Levenshtein (qualité de vie)
 6. Le reste selon tes priorités

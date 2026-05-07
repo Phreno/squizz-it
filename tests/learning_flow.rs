@@ -1,5 +1,5 @@
 use squizz_it::{
-    config::AnswerMode,
+    config::{AnswerMode, PlayMode},
     deck::Flashcard,
     game::{Session, SessionConfig, SubmitOutcome},
 };
@@ -28,6 +28,7 @@ fn engine_supports_learning_flow_without_io() {
             normalize_whitespace: true,
             shuffle_seed: Some(11),
             pre_ordered: false,
+            play_mode: PlayMode::Simon,
         },
     )
     .expect("valid session");

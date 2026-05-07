@@ -16,8 +16,8 @@ use ratatui::{
 use thiserror::Error;
 
 use crate::{
-    config::AppConfig,
-    deck::{DeckError, discover_decks, filter_decks, load_deck},
+    config::{AppConfig, PlayMode},
+    deck::{DeckError, Flashcard, discover_decks, filter_decks, load_deck},
     game::{Session, SessionConfig, SessionError, SubmitOutcome},
     persistence::{DeckProgress, Store, default_store_path, load_store, now_unix, save_store},
     srs,
@@ -28,6 +28,7 @@ pub struct UiOptions {
     pub deck: Option<String>,
     pub search: Option<String>,
     pub review: bool,
+    pub play_mode: Option<PlayMode>,
 }
 
 #[derive(Debug, Error)]
@@ -138,7 +139,13 @@ impl App {
             status: StatusMessage::info("Choisis un deck, puis valide avec Entrée."),
             should_exit: false,
             delimiter,
-            session_config: SessionConfig::from(config.game.clone()),
+            session_config: {
+                let mut sc = SessionConfig::from(config.game.clone());
+                if let Some(mode) = options.play_mode {
+                    sc.play_mode = mode;
+                }
+                sc
+            },
             deck_name: String::new(),
             session: None,
             focus_question: false,
@@ -189,6 +196,17 @@ impl App {
         let deck_progress = self.store.decks.get(&self.deck_name).unwrap_or(&empty);
 
         let mut cards = deck.cards;
+
+        // Reverse mode: swap key/value so the user answers with the original key
+        if self.session_config.play_mode == PlayMode::Reverse {
+            cards = cards
+                .into_iter()
+                .map(|c| Flashcard {
+                    key: c.value,
+                    value: c.key,
+                })
+                .collect();
+        }
 
         if self.review_mode {
             cards = srs::filter_due_cards(cards, deck_progress, now);
@@ -562,7 +580,9 @@ fn draw_play_screen(frame: &mut Frame, app: &App) {
     };
 
     let (stage_len, total_cards, card_position) = session.progress();
-    let show_question = should_show_question(stage_len, card_position);
+    let play_mode = session.play_mode();
+    let is_classic = matches!(play_mode, PlayMode::Classic | PlayMode::Reverse);
+    let show_question = is_classic || should_show_question(stage_len, card_position);
     let raw_question = if show_question {
         session.current_card().key.clone()
     } else {
@@ -583,22 +603,41 @@ fn draw_play_screen(frame: &mut Frame, app: &App) {
         ])
         .split(frame.area());
 
+    let mode_label = match play_mode {
+        PlayMode::Simon => "simon",
+        PlayMode::Classic => "classic",
+        PlayMode::Reverse => "inversé",
+    };
+    let progress_text = if is_classic {
+        format!(
+            " · {} · Manche {} · Carte {card_position}/{total_cards}",
+            mode_label,
+            session.round()
+        )
+    } else {
+        format!(
+            " · {} · Manche {} · Étape {stage_len}/{total_cards} · Carte {card_position}/{stage_len}",
+            mode_label,
+            session.round()
+        )
+    };
     let header = Paragraph::new(Line::from(vec![
         Span::styled("Deck ", Style::default().fg(Color::Cyan)),
         Span::styled(
             &app.deck_name,
             Style::default().add_modifier(Modifier::BOLD),
         ),
-        Span::raw(format!(
-            " · Manche {} · Étape {stage_len}/{total_cards} · Carte {card_position}/{stage_len}",
-            session.round()
-        )),
+        Span::raw(progress_text),
     ]))
     .block(Block::default().borders(Borders::ALL).title("Progression"));
     frame.render_widget(header, areas[0]);
 
     let ratio = if total_cards > 0 {
-        stage_len as f64 / total_cards as f64
+        if is_classic {
+            card_position as f64 / total_cards as f64
+        } else {
+            stage_len as f64 / total_cards as f64
+        }
     } else {
         0.0
     };

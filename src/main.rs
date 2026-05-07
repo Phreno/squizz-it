@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use squizz_it::{config::AppConfig, ui::UiOptions};
+use squizz_it::{
+    config::{AppConfig, PlayMode},
+    ui::UiOptions,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "squizz-it")]
@@ -18,6 +21,9 @@ struct Cli {
     /// Launch a review session with only due cards.
     #[arg(long)]
     review: bool,
+    /// Play mode: simon, classic, or reverse.
+    #[arg(long, default_value = "simon")]
+    mode: PlayMode,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -33,6 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             deck: cli.deck,
             search: cli.search,
             review: cli.review,
+            play_mode: Some(cli.mode),
         },
     )?;
 

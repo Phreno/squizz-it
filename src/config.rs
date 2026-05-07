@@ -14,6 +14,15 @@ pub enum AnswerMode {
     CaseInsensitive,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PlayMode {
+    #[default]
+    Simon,
+    Classic,
+    Reverse,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct CsvConfig {
     #[serde(default = "default_delimiter")]
@@ -30,6 +39,8 @@ pub struct GameConfig {
     pub shuffle_seed: Option<u64>,
     #[serde(default = "default_true")]
     pub srs_ordering: bool,
+    #[serde(default)]
+    pub play_mode: PlayMode,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -75,6 +86,29 @@ impl Default for GameConfig {
             normalize_whitespace: default_true(),
             shuffle_seed: None,
             srs_ordering: default_true(),
+            play_mode: PlayMode::default(),
+        }
+    }
+}
+
+impl std::fmt::Display for PlayMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlayMode::Simon => write!(f, "simon"),
+            PlayMode::Classic => write!(f, "classic"),
+            PlayMode::Reverse => write!(f, "reverse"),
+        }
+    }
+}
+
+impl std::str::FromStr for PlayMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "simon" => Ok(PlayMode::Simon),
+            "classic" => Ok(PlayMode::Classic),
+            "reverse" => Ok(PlayMode::Reverse),
+            other => Err(format!("unknown play mode `{other}`; use simon, classic, or reverse")),
         }
     }
 }
@@ -151,7 +185,7 @@ fn default_true() -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{AnswerMode, AppConfig, CsvConfig, GameConfig};
+    use super::{AnswerMode, AppConfig, CsvConfig, GameConfig, PlayMode};
 
     #[test]
     fn parse_config_toml() {
@@ -182,6 +216,7 @@ shuffle_seed = 42
                 normalize_whitespace: false,
                 shuffle_seed: Some(42),
                 srs_ordering: true,
+                play_mode: PlayMode::Simon,
             }
         );
     }

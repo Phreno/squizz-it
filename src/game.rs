@@ -2,7 +2,7 @@ use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 use thiserror::Error;
 
 use crate::{
-    config::{AnswerMode, GameConfig},
+    config::{AnswerMode, GameConfig, PlayMode},
     deck::Flashcard,
 };
 
@@ -12,6 +12,7 @@ pub struct SessionConfig {
     pub normalize_whitespace: bool,
     pub shuffle_seed: Option<u64>,
     pub pre_ordered: bool,
+    pub play_mode: PlayMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +46,7 @@ impl From<GameConfig> for SessionConfig {
             normalize_whitespace: value.normalize_whitespace,
             shuffle_seed: value.shuffle_seed,
             pre_ordered: value.srs_ordering,
+            play_mode: value.play_mode,
         }
     }
 }
@@ -62,9 +64,14 @@ impl Session {
             cards.shuffle(&mut rng);
         }
 
+        let stage_len = match config.play_mode {
+            PlayMode::Classic | PlayMode::Reverse => cards.len(),
+            PlayMode::Simon => 1,
+        };
+
         Ok(Self {
             cards,
-            stage_len: 1,
+            stage_len,
             cursor: 0,
             round: 1,
             config,
@@ -84,7 +91,14 @@ impl Session {
     }
 
     pub fn is_replay_card(&self) -> bool {
-        self.cursor + 1 < self.stage_len
+        match self.config.play_mode {
+            PlayMode::Classic | PlayMode::Reverse => false,
+            PlayMode::Simon => self.cursor + 1 < self.stage_len,
+        }
+    }
+
+    pub fn play_mode(&self) -> PlayMode {
+        self.config.play_mode
     }
 
     pub fn submit_answer(&mut self, answer: &str) -> SubmitOutcome {
@@ -93,6 +107,24 @@ impl Session {
             return SubmitOutcome::Incorrect;
         }
 
+        match self.config.play_mode {
+            PlayMode::Classic | PlayMode::Reverse => self.advance_classic(),
+            PlayMode::Simon => self.advance_simon(),
+        }
+    }
+
+    fn advance_classic(&mut self) -> SubmitOutcome {
+        if self.cursor + 1 >= self.cards.len() {
+            self.cards.shuffle(&mut self.rng);
+            self.cursor = 0;
+            self.round += 1;
+            return SubmitOutcome::RoundRestarted;
+        }
+        self.cursor += 1;
+        SubmitOutcome::AdvanceCard
+    }
+
+    fn advance_simon(&mut self) -> SubmitOutcome {
         if self.cursor + 1 < self.stage_len {
             self.cursor += 1;
             return SubmitOutcome::AdvanceCard;
@@ -138,7 +170,10 @@ fn normalize(raw: &str, config: SessionConfig) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{config::AnswerMode, deck::Flashcard};
+    use crate::{
+        config::{AnswerMode, PlayMode},
+        deck::Flashcard,
+    };
 
     use super::{Session, SessionConfig, SubmitOutcome};
 
@@ -161,6 +196,17 @@ mod tests {
             normalize_whitespace: true,
             shuffle_seed: Some(seed),
             pre_ordered: false,
+            play_mode: PlayMode::Simon,
+        }
+    }
+
+    fn classic_config(seed: u64) -> SessionConfig {
+        SessionConfig {
+            answer_mode: AnswerMode::CaseInsensitive,
+            normalize_whitespace: true,
+            shuffle_seed: Some(seed),
+            pre_ordered: false,
+            play_mode: PlayMode::Classic,
         }
     }
 
@@ -213,6 +259,7 @@ mod tests {
                 normalize_whitespace: true,
                 shuffle_seed: Some(3),
                 pre_ordered: false,
+                play_mode: PlayMode::Simon,
             },
         )
         .expect("session");
@@ -230,5 +277,43 @@ mod tests {
         let a2 = session.current_card().value.clone();
         assert_eq!(session.submit_answer(&a2), SubmitOutcome::AdvanceCard);
         assert!(!session.is_replay_card());
+    }
+
+    #[test]
+    fn classic_mode_advances_through_all_cards() {
+        let mut session = Session::new(test_cards(), classic_config(1)).expect("session");
+        let a1 = session.current_card().value.clone();
+        assert_eq!(session.submit_answer(&a1), SubmitOutcome::AdvanceCard);
+        assert!(!session.is_replay_card());
+        let a2 = session.current_card().value.clone();
+        assert_eq!(session.submit_answer(&a2), SubmitOutcome::RoundRestarted);
+        assert_eq!(session.round(), 2);
+    }
+
+    #[test]
+    fn classic_mode_incorrect_stays_on_card() {
+        let mut session = Session::new(test_cards(), classic_config(1)).expect("session");
+        let key_before = session.current_card().key.clone();
+        assert_eq!(session.submit_answer("wrong"), SubmitOutcome::Incorrect);
+        assert_eq!(session.current_card().key, key_before);
+    }
+
+    #[test]
+    fn classic_mode_no_stage_advancement() {
+        let cards = vec![
+            Flashcard { key: "A".into(), value: "Alpha".into() },
+            Flashcard { key: "B".into(), value: "Beta".into() },
+            Flashcard { key: "C".into(), value: "Gamma".into() },
+        ];
+        let mut session = Session::new(cards, classic_config(1)).expect("session");
+        let mut outcomes = Vec::new();
+        for _ in 0..3 {
+            let answer = session.current_card().value.clone();
+            outcomes.push(session.submit_answer(&answer));
+        }
+        // Last card triggers RoundRestarted, others are AdvanceCard
+        assert_eq!(outcomes[0], SubmitOutcome::AdvanceCard);
+        assert_eq!(outcomes[1], SubmitOutcome::AdvanceCard);
+        assert_eq!(outcomes[2], SubmitOutcome::RoundRestarted);
     }
 }
